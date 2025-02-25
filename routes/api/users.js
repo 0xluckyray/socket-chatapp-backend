@@ -48,7 +48,7 @@ async (req, res) => {
             { expiresIn: '5 days'},
             (err, token) => {
                 if (err) throw err;
-                res.json({ token, username: user.username });
+                res.json({ token, userid: user.id, username: user.username, name: user.name });
             }
         );
     } catch (err) {
