@@ -1,0 +1,4 @@
+{
+    "mongoURI": "mongodb://0.0.0.0:27017/socket-chatapp",
+    "jwtSecret": "yourjwtsecret"
+}
