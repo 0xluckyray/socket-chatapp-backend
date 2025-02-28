@@ -7,6 +7,7 @@ const jwt = require("jsonwebtoken");
 const config = require("config");
 
 const User = require("./models/User");
+const DirectMessage = require("./models/DirectMessage");
 
 const app = express();
 const httpServer = createServer(app);
@@ -38,13 +39,14 @@ io.on("connection", (socket) => {
 
     // Store user data
     users.set(socket.id, {
-      id: userId, 
+      id: userId,
       name: username,
-      status: 'online',
+      status: "online",
       lastMessage: "",
       time: "2h",
-      avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=80&h=80&fit=crop",
-      messages: []
+      avatar:
+        "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=80&h=80&fit=crop",
+      messages: [],
     });
 
     // Store userId to socketId mapping
@@ -54,7 +56,7 @@ io.on("connection", (socket) => {
     io.emit("userList", Array.from(users.values()));
   });
 
-  socket.on("sendMessage", ({ content, channelId, serverId }) => {
+  socket.on("sendMessage", async ({ content, channelId, serverId }) => {
     console.log("sendMessage----------->", content, channelId, serverId);
     const user = users.get(socket.id);
     if (!user) return;
@@ -75,7 +77,7 @@ io.on("connection", (socket) => {
         avatar:
           "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop",
       },
-      receiverId: channelId
+      receiverId: channelId,
     };
 
     // Store message
@@ -87,8 +89,69 @@ io.on("connection", (socket) => {
     }
     messages.get(key).push(message);
 
+    // DM
+    if (!serverId) {
+
+      // Store to MongoDB
+      const dm = await DirectMessage.findOne({
+        $or: [
+          { dmid: `dm:${user.id}-${channelId}` },
+          { dmid: `dm:${channelId}-${user.id}` },
+        ],
+      });
+
+      if (!dm) {
+        // new DM
+        const newDm = new DirectMessage({
+          dmid: `dm:${user.id}-${channelId}`,
+          messages: [
+            {
+              id: Date.now().toString(),
+              content: content,
+              timestamp: new Date().toLocaleTimeString(),
+              sender: user.id,
+              receiver: channelId,
+            },
+          ],
+        });
+        await newDm.save();
+      } else {
+        // if existing
+
+        dm.messages.push({
+          id: Date.now().toString(),
+          content: content,
+          timestamp: new Date().toLocaleTimeString(),
+          sender: user.id,
+          receiver: channelId,
+        });
+
+        await dm.save();
+
+        // await DirectMessage.findOneAndUpdate(
+        //   { dmid: dm.id }, // Find the thread by dmid
+        //   {
+        //     $push: {
+        //       messages: {
+        //         id: Date.now().toString(),
+        //         content: content,
+        //         timestamp: new Date().toLocaleTimeString(),
+        //         sender: user.id,
+        //         receiver: channelId,
+        //       },
+        //     },
+        //   },
+        //   { new: true } // Return the updated document
+        // );
+      }
+    }
+
     // Emit the message to the receiver
-    io.to(receiverSocketId).emit("newMessage", { message, channelId: user.id, serverId });
+    io.to(receiverSocketId).emit("newMessage", {
+      message,
+      channelId: user.id,
+      serverId,
+    });
 
     // Emit the message back to the sender (optional)
     socket.emit("newMessage", { message, channelId, serverId });
@@ -97,18 +160,28 @@ io.on("connection", (socket) => {
     // io.emit("newMessage", { message, channelId, serverId });
   });
 
-  socket.on("joinChannel", ({ channelId, serverId }) => {
+  socket.on("joinChannel", async ({ channelId, serverId }) => {
     const user = users.get(socket.id);
     if (!user) return;
 
     const roomId = serverId
-    ? `server:${serverId}:${channelId}`
-    : `dm:${user.id}-${channelId}`;
+      ? `server:${serverId}:${channelId}`
+      : `dm:${user.id}-${channelId}`;
     socket.join(roomId);
     console.log("joinChannel----------->", roomId);
 
     // Send channel history
-    const channelMessages = messages.get(roomId) || [];
+    const dm = await DirectMessage.findOne({
+      $or: [
+        { dmid: `dm:${user.id}-${channelId}` },
+        { dmid: `dm:${channelId}-${user.id}` },
+      ],
+    });
+
+    // const channelMessages = messages.get(roomId) || [];
+    const channelMessages = dm?.messages || [];
+    messages.set(roomId, channelMessages);
+
     socket.emit("channelHistory", {
       messages: channelMessages,
       channelId,
